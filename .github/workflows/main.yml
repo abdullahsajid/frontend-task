@@ -1,0 +1,16 @@
+name: Deployment On Commit
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  call-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call API Endpoint for Reload
+        uses: fjogeleit/http-request-action@v1.8.0
+        with:
+          url: ${{ secrets.HOME_DEPLOYMENT }} 
+          method: "GET"
