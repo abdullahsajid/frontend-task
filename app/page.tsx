@@ -3,48 +3,56 @@
 import { useEffect, useRef, useState } from "react";
 import { BiSend } from "react-icons/bi";
 import EditorJS from '@editorjs/editorjs';
-import Header from '@editorjs/header';
-import Paragraph from '@editorjs/paragraph';
-import List from '@editorjs/list';
+import UserService from "@/src/services/user-service";
 
 const Home: React.FC = () => {
   const [prompt, setPrompt] = useState("");
   const editorRef = useRef<EditorJS | null>(null);
   const holderRef = useRef<HTMLDivElement>(null);
-  const streamingBlockRef = useRef<string>('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [context, setContext] = useState("");
+  const accumulatedContent = useRef<string>('');
   
-   useEffect(() => {
+  useEffect(() => {
     let isMounted = true;
 
     const initEditor = async () => {
       if (editorRef.current || !holderRef.current) return;
 
       try {
-        // Dynamic imports
         const EditorJS = (await import('@editorjs/editorjs')).default;
         const Header = (await import('@editorjs/header')).default;
         const ListTool = (await import('@editorjs/list')).default;
-        const ParagraphTool = (await import('@editorjs/paragraph')).default;
+        const Paragraph = (await import('@editorjs/paragraph')).default;
+        const CodeTool = (await import('@editorjs/code')).default;
 
         if (!isMounted) return;
 
         editorRef.current = new EditorJS({
           holder: holderRef.current,
           tools: {
-            header: Header,
-            list: ListTool,
-            paragraph: {
-              class: ParagraphTool,
+            header: {
+              class: Header,
+              config: {
+                levels: [1, 2, 3, 4],
+                defaultLevel: 2
+              }
+            },
+            list: {
+              class: ListTool,
               inlineToolbar: true,
             },
+            paragraph: {
+              class: Paragraph,
+              inlineToolbar: true,
+            },
+            code: CodeTool,
           },
           placeholder: 'AI responses will appear here...',
           minHeight: 0,
+          readOnly: true
         });
 
-        // Wait for editor to be ready
         await editorRef.current.isReady;
       } catch (error) {
         console.error('Failed to initialize Editor.js:', error);
@@ -68,28 +76,17 @@ const Home: React.FC = () => {
     };
   }, []);
 
-  const appendToEditor = async (content: string) => {
+  const updateEditorWithBlocks = async (jsonString: string) => {
     if (!editorRef.current) return;
 
     try {
-      streamingBlockRef.current += content;
+      const data = JSON.parse(jsonString);
       
-      const data = await editorRef.current.save();
-      const blocks = data.blocks || [];
-
-      // Update the last block or create new one
-      if (blocks.length > 0 && blocks[blocks.length - 1].type === 'paragraph') {
-        blocks[blocks.length - 1].data.text = streamingBlockRef.current;
-      } else {
-        blocks.push({
-          type: 'paragraph',
-          data: { text: streamingBlockRef.current },
-        });
+      if (data.blocks && Array.isArray(data.blocks)) {
+        await editorRef.current.render({ blocks: data.blocks });
       }
-
-      await editorRef.current.render({ blocks });
     } catch (error) {
-      console.error('Error updating editor:', error);
+      console.log('Waiting for complete JSON...');
     }
   };
 
@@ -98,19 +95,10 @@ const Home: React.FC = () => {
     if (!prompt.trim() || isStreaming) return;
 
     setIsStreaming(true);
-    streamingBlockRef.current = '';
+    accumulatedContent.current = '';
 
     try {
-      const response = await fetch('http://localhost:8080/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          prompt,
-          context,
-        }),
-      });
+      const response = await UserService.chat(prompt, context);
 
       if (!response.ok) {
         throw new Error('Failed to fetch');
@@ -136,7 +124,9 @@ const Home: React.FC = () => {
             try {
               const parsed = JSON.parse(data);
               if (parsed.content) {
-                await appendToEditor(parsed.content);
+                accumulatedContent.current += parsed.content;
+                
+                await updateEditorWithBlocks(accumulatedContent.current);
               }
             } catch (e) {
               console.error('Error parsing SSE data:', e);
@@ -144,68 +134,71 @@ const Home: React.FC = () => {
           }
         }
       }
+
+      await updateEditorWithBlocks(accumulatedContent.current);
+
     } catch (error) {
       console.error('Error:', error);
-      await appendToEditor('\n\nError: Something went wrong. Please try again.');
+      
+      if (editorRef.current) {
+        await editorRef.current.render({
+          blocks: [
+            {
+              type: 'paragraph',
+              data: {
+                text: 'Error: Something went wrong. Please try again.'
+              }
+            }
+          ]
+        });
+      }
     } finally {
       setIsStreaming(false);
-      streamingBlockRef.current = '';
       setPrompt('');
+      accumulatedContent.current = '';
     }
   };
 
   return (
-    <main className="h-full">
-      <h1 className="text-4xl font-bold">AI ChatApp</h1>
-      <div className="h-full">
-         <div className="mb-2">
-        <label className="block text-sm font-medium text-gray-700">
-          AI Response:
-        </label>
-      </div>
+  <main className="flex flex-col h-screen w-full p-4">
+    <h1 className="text-4xl font-bold mb-4">AI ChatApp</h1>
+
+    <div className="flex-1 overflow-y-auto mb-4">
+      <label className="block text-sm font-medium text-gray-700 mb-2">
+        AI Response:
+      </label>
+
       <div
         ref={holderRef}
         id="editorjs"
         className="border rounded-lg p-4 min-h-[400px] bg-white"
       />
-      {/* {isStreaming && (
-        <div className="mt-2 text-sm text-blue-600">
-          ⚡ Streaming response...
-        </div>
-      )} */}
-        <div className="flex items-center justify-center w-full gap-3 sticky bottom-0">
-          <div className="flex-1">
-           <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  handleSubmit(e);
-                }
-              }}
-              placeholder="Type your message... (Press Enter to send, Shift+Enter for new line)"
-              className="w-full text-black placeholder-black-400 resize-none border border-[#000000] outline-none text-sm leading-relaxed rounded min-h-[50px] max-h-[120px]"
-              rows={1}
-              // disabled={isLoading}
-              style={{ height: 'auto' }}
-            />
-          </div>
-          <div>
-            <button
-              onClick={(e) => handleSubmit(e)}
-              // disabled={isLoading || !value.trim()}
-              className="flex-shrink-0 w-10 h-10 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 disabled:from-gray-600 disabled:to-gray-700 rounded-xl flex items-center justify-center transition-all duration-200 transform hover:scale-105 disabled:scale-100 disabled:cursor-not-allowed shadow-lg"
-            >
-              {false ? (
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-              ) : (
-                <BiSend className="w-4 h-4 text-black" />
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-    </main>
+    </div>
+
+    <div className="w-full flex items-center gap-3 pb-2 pt-3 border-t bg-white">
+      <textarea
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            handleSubmit(e);
+          }
+        }}
+        placeholder="Type your message... (Press Enter to send, Shift+Enter for new line)"
+        className="flex-1 w-full text-black placeholder-gray-400 resize-none border border-gray-300 outline-none text-sm leading-relaxed rounded-lg p-2 min-h-[45px] max-h-[120px]"
+        rows={1}
+        style={{ height: 'auto' }}
+      />
+
+      <button
+        onClick={(e) => handleSubmit(e)}
+        className="w-11 h-11 bg-black text-white rounded-lg flex items-center justify-center hover:bg-gray-900 transition shadow"
+      >
+        <BiSend className="w-5 h-5" />
+      </button>
+    </div>
+  </main>
+
   );
 };
 
