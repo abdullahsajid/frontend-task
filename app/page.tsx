@@ -50,7 +50,7 @@ const Home: React.FC = () => {
           },
           placeholder: 'AI responses will appear here...',
           minHeight: 0,
-          readOnly: true
+          readOnly: true,
         });
 
         await editorRef.current.isReady;
@@ -123,6 +123,7 @@ const Home: React.FC = () => {
             const data = line.slice(6);
             try {
               const parsed = JSON.parse(data);
+              console.log('Parsed SSE data:', parsed);
               if (parsed.content) {
                 accumulatedContent.current += parsed.content;
                 
@@ -173,6 +174,9 @@ const Home: React.FC = () => {
         id="editorjs"
         className="border rounded-lg p-4 min-h-[400px] bg-white"
       />
+      {isStreaming && (
+        <div className="mt-2 text-sm text-gray-500">AI is typing...</div>
+      )}
     </div>
 
     <div className="w-full flex items-center gap-3 pb-2 pt-3 border-t bg-white">
@@ -191,7 +195,8 @@ const Home: React.FC = () => {
       />
 
       <button
-        onClick={(e) => handleSubmit(e)}
+          onClick={(e) => handleSubmit(e)}
+          disabled={isStreaming || !prompt.trim()}
         className="w-11 h-11 bg-black text-white rounded-lg flex items-center justify-center hover:bg-gray-900 transition shadow"
       >
         <BiSend className="w-5 h-5" />
